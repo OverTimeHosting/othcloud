@@ -27,18 +27,51 @@ coverage
 out/
 dist
 
-
 # Debug
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
 
 # Editor
 .idea
+.vscode/settings.json
+*.swp
+*.swo
 
 # Misc
 .DS_Store
 *.pem
 
-
 .db
+
+# OthCloud specific
+/data/
+!/data/.gitkeep
+
+# Runtime files
+*.pid
+*.seed
+*.pid.lock
+
+# Logs
+*.log
+logs/
+
+# Docker volumes (if using bind mounts)
+postgres-data/
+redis-data/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Backup files
+*.backup
+*.bak
+*.tmp

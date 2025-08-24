@@ -33,13 +33,3 @@
 #       runner: node
 #     "any.go":
 #       runner: go run
-
-commit-msg:
-  commands:
-    commitlint:
-      # run: "npx commitlint --edit $1"
-
-pre-commit:
-  commands:
-    check:
-      # run: "pnpm check"
