@@ -44,15 +44,28 @@ check_git() {
     if ! command -v git &> /dev/null; then
         log "Installing git..."
         if command -v apt-get &> /dev/null; then
-            sudo apt-get update && sudo apt-get install -y git
+            apt-get update && apt-get install -y git curl
         elif command -v yum &> /dev/null; then
-            sudo yum install -y git
+            yum install -y git curl
         elif command -v dnf &> /dev/null; then
-            sudo dnf install -y git
+            dnf install -y git curl
         elif command -v brew &> /dev/null; then
             brew install git
         else
             error "Could not install git automatically. Please install git manually and try again."
+        fi
+        log "Git installed successfully"
+    fi
+    
+    # Also check for curl
+    if ! command -v curl &> /dev/null; then
+        log "Installing curl..."
+        if command -v apt-get &> /dev/null; then
+            apt-get update && apt-get install -y curl
+        elif command -v yum &> /dev/null; then
+            yum install -y curl
+        elif command -v dnf &> /dev/null; then
+            dnf install -y curl
         fi
     fi
 }

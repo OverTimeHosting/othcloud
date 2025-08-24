@@ -1,20 +1,24 @@
 # 🚀 OthCloud - Streamlined Dokploy Build
 
-A simplified, one-command deployment version of Dokploy - a free, self-hostable Platform as a Service (PaaS).
+A simplified, **zero-setup** deployment version of Dokploy - a free, self-hostable Platform as a Service (PaaS).
+
+> ✨ **Fully Automated**: Automatically installs Docker, Node.js, and all dependencies - just run one command!
 
 ## ⚡ Quick Start
 
-**One-command setup:**
+**Fully automated - installs everything for you:**
 ```bash
-git clone https://github.com/OverTimeHosting/othcloud.git && cd othcloud && make dev
+git clone https://github.com/OverTimeHosting/othcloud.git && cd othcloud && sudo make dev
 ```
 
-**Or using the installer:**
+**One-line installer - zero setup required:**
 ```bash
-curl -sSL https://raw.githubusercontent.com/OverTimeHosting/othcloud/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/OverTimeHosting/othcloud/main/install.sh | sudo bash
 ```
 
 Your application will be running at `http://localhost:3000` 🎉
+
+> **Note:** `sudo` is required for automatic installation of Docker, Node.js, and system dependencies.
 
 ## 🎯 Available Commands
 
@@ -103,11 +107,16 @@ This streamlined version provides:
 
 ## 📋 System Requirements
 
-- **Docker** (automatically installed if missing)
-- **Docker Compose** 
-- **Node.js 20.16.0** (automatically prompted if missing)
-- **pnpm** (automatically installed if missing)
-- **Git**
+**Nothing to install manually!** The script automatically installs:
+
+- 🐳 **Docker** - Container platform
+- 📦 **Docker Compose** - Multi-container orchestration
+- 🟢 **Node.js 20.16.0** - JavaScript runtime
+- 📦 **pnpm** - Fast package manager
+- 🌐 **Git** - Version control
+- ⚙️ **curl** - HTTP client
+
+**Supported OS:** Ubuntu, Debian, CentOS, RHEL, Fedora, Amazon Linux
 
 ## 🔧 Troubleshooting
 

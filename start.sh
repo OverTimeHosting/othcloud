@@ -67,25 +67,79 @@ check_requirements() {
     
     # Check Docker
     if ! command -v docker &> /dev/null; then
-        warn "Docker not found. Please install Docker first:"
-        echo "  curl -fsSL https://get.docker.com | sh"
-        echo "  sudo usermod -aG docker \$USER"
-        echo "  # Then log out and back in"
-        exit 1
+        warn "Docker not found. Installing Docker..."
+        if [[ "$(uname)" == "Linux" ]]; then
+            # Install Docker on Linux
+            curl -fsSL https://get.docker.com -o get-docker.sh
+            sh get-docker.sh
+            rm get-docker.sh
+            
+            # Add user to docker group if not root
+            if [[ $EUID -ne 0 && -n "$SUDO_USER" ]]; then
+                usermod -aG docker "$SUDO_USER"
+                log "Added $SUDO_USER to docker group. You may need to log out and back in."
+            elif [[ $EUID -ne 0 ]]; then
+                usermod -aG docker "$(whoami)"
+                log "Added $(whoami) to docker group. You may need to log out and back in."
+            fi
+            
+            # Start Docker service
+            systemctl enable docker
+            systemctl start docker
+            
+            log "Docker installed successfully"
+        else
+            error "Please install Docker manually for your system and try again"
+        fi
     fi
     
     # Check Docker Compose
     if ! docker compose version &> /dev/null; then
-        error "Docker Compose not found. Please install Docker Compose"
+        warn "Docker Compose not found. Installing Docker Compose..."
+        
+        if [[ "$(uname)" == "Linux" ]]; then
+            # Get latest version
+            COMPOSE_VERSION=$(curl -s https://api.github.com/repos/docker/compose/releases/latest | grep 'tag_name' | cut -d'"' -f4)
+            
+            # Download and install
+            curl -L "https://github.com/docker/compose/releases/download/$COMPOSE_VERSION/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+            chmod +x /usr/local/bin/docker-compose
+            
+            # Create symlink for 'docker compose' command
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            ln -sf /usr/local/bin/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
+            
+            log "Docker Compose installed successfully"
+        else
+            error "Please install Docker Compose manually for your system and try again"
+        fi
+    fi
+    
+    # Verify Docker is running
+    if ! docker info &> /dev/null; then
+        warn "Docker is not running. Starting Docker..."
+        systemctl start docker || service docker start || error "Failed to start Docker service"
+        sleep 3
     fi
     
     # Check Node.js
     if ! command -v node &> /dev/null; then
-        warn "Node.js not found. Please install Node.js $NODE_VERSION"
-        echo "  # Using nvm (recommended):"
-        echo "  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash"
-        echo "  nvm install $NODE_VERSION && nvm use"
-        exit 1
+        warn "Node.js not found. Installing Node.js $NODE_VERSION..."
+        if [[ "$(uname)" == "Linux" ]]; then
+            # Install Node.js via NodeSource repository
+            curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+            apt-get install -y nodejs
+            
+            # Alternative for RPM-based systems
+            if ! command -v node &> /dev/null; then
+                curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
+                yum install -y nodejs || dnf install -y nodejs
+            fi
+            
+            log "Node.js installed successfully"
+        else
+            error "Please install Node.js $NODE_VERSION manually and try again"
+        fi
     fi
     
     # Check pnpm
@@ -93,9 +147,43 @@ check_requirements() {
         warn "pnpm not found. Installing pnpm..."
         if [[ $EUID -eq 0 ]]; then
             # Install pnpm globally for root
-            npm install -g pnpm
+            npm install -g pnpm --unsafe-perm
         else
             npm install -g pnpm
+        fi
+        log "pnpm installed successfully"
+    fi
+    
+    # Check Git
+    if ! command -v git &> /dev/null; then
+        warn "Git not found. Installing Git..."
+        if [[ "$(uname)" == "Linux" ]]; then
+            if command -v apt-get &> /dev/null; then
+                apt-get update && apt-get install -y git
+            elif command -v yum &> /dev/null; then
+                yum install -y git
+            elif command -v dnf &> /dev/null; then
+                dnf install -y git
+            else
+                error "Could not install git. Please install manually."
+            fi
+            log "Git installed successfully"
+        else
+            error "Please install Git manually for your system and try again"
+        fi
+    fi
+    
+    # Check curl (needed for installations)
+    if ! command -v curl &> /dev/null; then
+        warn "curl not found. Installing curl..."
+        if [[ "$(uname)" == "Linux" ]]; then
+            if command -v apt-get &> /dev/null; then
+                apt-get update && apt-get install -y curl
+            elif command -v yum &> /dev/null; then
+                yum install -y curl
+            elif command -v dnf &> /dev/null; then
+                dnf install -y curl
+            fi
         fi
     fi
     
@@ -103,8 +191,10 @@ check_requirements() {
     NODE_CURRENT=$(node -v | sed 's/v//')
     if ! [[ $NODE_CURRENT == $NODE_VERSION* ]]; then
         warn "Node.js version mismatch. Expected: $NODE_VERSION, Found: $NODE_CURRENT"
-        warn "Consider using nvm: nvm install $NODE_VERSION && nvm use"
+        warn "The application should still work, but consider updating if you encounter issues."
     fi
+    
+    log "All system requirements are satisfied!"
 }
 
 # Check if ports are available
