@@ -35,7 +35,9 @@
 		"status": "docker compose ps",
 		"restart": "make restart",
 		"reset": "make reset",
-		"studio": "pnpm --filter=dokploy run studio"
+		"studio": "pnpm --filter=dokploy run studio",
+		"verify": "./verify.sh",
+		"check-setup": "./verify.sh"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.1.1",

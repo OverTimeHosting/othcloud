@@ -232,10 +232,29 @@ fix_ownership() {
 setup_environment() {
     log "Setting up environment..."
     
+    # Check if we're in the right directory
+    if [[ ! -f "package.json" ]]; then
+        error "package.json not found. Make sure you're in the othcloud directory."
+    fi
+    
     # Create .env if it doesn't exist
     if [[ ! -f apps/dokploy/.env ]]; then
-        cp apps/dokploy/.env.example apps/dokploy/.env
-        log "Created environment file"
+        if [[ -f apps/dokploy/.env.example ]]; then
+            cp apps/dokploy/.env.example apps/dokploy/.env
+            log "Created environment file from .env.example"
+        else
+            # Create a default .env file if example doesn't exist
+            log "Creating default environment file..."
+            mkdir -p apps/dokploy
+            cat > apps/dokploy/.env << 'EOF'
+DATABASE_URL="postgres://dokploy:amukds4wi9001583845717ad2@localhost:5432/dokploy"
+PORT=3000
+NODE_ENV=development
+EOF
+            log "Created default environment file"
+        fi
+    else
+        log "Environment file already exists"
     fi
     
     # Create required directories
@@ -272,6 +291,12 @@ log:
 EOF
         log "Created Traefik configuration"
     fi
+    
+    # Create .gitkeep for data directory
+    touch data/.gitkeep
+    
+    # Final ownership fix
+    fix_ownership
 }
 
 # Start services
@@ -435,6 +460,10 @@ show_help() {
 # Main execution
 main() {
     print_banner
+    
+    # Show current directory for debugging
+    log "Current directory: $(pwd)"
+    log "Directory contents: $(ls -la | head -5 | tail -4 | tr '\n' ' ')"
     
     case "${1:---dev}" in
         --dev)

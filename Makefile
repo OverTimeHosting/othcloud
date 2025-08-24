@@ -103,3 +103,10 @@ docker-ps: ## Show Docker container status
 ports: ## Show port usage
 	@echo "$(BLUE)Checking port usage:$(NC)"
 	@netstat -tuln 2>/dev/null | grep -E ':(3000|5432|6379|80|443|8080)' || echo "No conflicts found"
+
+verify: ## Verify directory structure and setup
+	@echo "$(BLUE)Verifying OthCloud setup...$(NC)"
+	@chmod +x verify.sh 2>/dev/null || true
+	@./verify.sh
+
+check: verify ## Alias for verify

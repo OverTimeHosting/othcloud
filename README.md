@@ -8,7 +8,9 @@ A simplified, **zero-setup** deployment version of Dokploy - a free, self-hostab
 
 **Fully automated - installs everything for you:**
 ```bash
-git clone https://github.com/OverTimeHosting/othcloud.git && cd othcloud && sudo make dev
+git clone https://github.com/OverTimeHosting/othcloud.git
+cd othcloud              # ← Important: Make sure you're in the othcloud directory
+sudo make dev
 ```
 
 **One-line installer - zero setup required:**
@@ -19,6 +21,8 @@ curl -sSL https://raw.githubusercontent.com/OverTimeHosting/othcloud/main/instal
 Your application will be running at `http://localhost:3000` 🎉
 
 > **Note:** `sudo` is required for automatic installation of Docker, Node.js, and system dependencies.
+
+**Having issues?** Run `make verify` to check your setup.
 
 ## 🎯 Available Commands
 
@@ -120,19 +124,48 @@ This streamlined version provides:
 
 ## 🔧 Troubleshooting
 
-### Port Conflicts
+### 📁 Directory/File Issues
+
+If you get `cannot stat 'apps/dokploy/.env.example': No such file or directory`:
+
+```bash
+# 1. Verify your setup
+make verify
+
+# 2. Check you're in the right directory
+pwd                    # Should show: /path/to/othcloud
+ls -la                 # Should show: package.json, start.sh, etc.
+
+# 3. If files are missing, re-clone:
+cd ..
+rm -rf othcloud
+git clone https://github.com/OverTimeHosting/othcloud.git
+cd othcloud
+sudo make dev
+```
+
+### 🔌 Port Conflicts
 ```bash
 make ports          # Check port usage
 sudo systemctl stop nginx apache2  # Stop web servers if needed
 ```
 
-### Docker Issues
+### 🐛 Other Issues
+```bash
+make logs           # Check error logs  
+make restart        # Restart services
+make clean          # Reset everything
+```
+
+**For detailed troubleshooting:** See [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
+
+### 🐛 Docker Issues
 ```bash
 make clean          # Clean everything
 docker system prune -af  # Reset Docker
 ```
 
-### Service Issues
+### 🔧 Service Issues
 ```bash
 make logs           # Check logs
 make status         # Check service status
