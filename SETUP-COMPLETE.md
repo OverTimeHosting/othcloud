@@ -22,12 +22,12 @@ Your `othcloud` repository has been transformed into a streamlined, one-command 
 ### Quick Start (Recommended)
 ```bash
 # Clone and start in one command
-git clone <your-repo> othcloud && cd othcloud && make dev
+git clone https://github.com/OverTimeHosting/othcloud.git othcloud && cd othcloud && make dev
 ```
 
 ### Manual Steps
 ```bash
-git clone <your-repo> othcloud
+git clone https://github.com/OverTimeHosting/othcloud.git othcloud
 cd othcloud
 chmod +x *.sh          # Make scripts executable
 make dev               # Start development mode
@@ -83,7 +83,7 @@ Windows users can:
 Update the `install.sh` script with your actual repository URL, then users can install with:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/your-username/othcloud/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/OverTimeHosting/othcloud/main/install.sh | bash
 ```
 
 ## 📋 Next Steps

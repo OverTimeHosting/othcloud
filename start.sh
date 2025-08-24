@@ -39,10 +39,25 @@ error() {
     exit 1
 }
 
-# Check if running as root
+# Check if running as root and handle appropriately
 check_permissions() {
     if [[ $EUID -eq 0 ]]; then
-        error "Please do not run this script as root"
+        warn "Running as root detected. This is allowed but not recommended for development."
+        warn "Consider creating a non-root user for better security."
+        
+        # Set appropriate environment for root
+        export DOCKER_BUILDKIT=1
+        export COMPOSE_DOCKER_CLI_BUILD=1
+        
+        # Ensure proper ownership of files
+        if [[ -n "$SUDO_USER" ]]; then
+            log "Will set file ownership to user: $SUDO_USER"
+            ORIGINAL_USER="$SUDO_USER"
+        else
+            ORIGINAL_USER="root"
+        fi
+        
+        sleep 2
     fi
 }
 
@@ -76,7 +91,12 @@ check_requirements() {
     # Check pnpm
     if ! command -v pnpm &> /dev/null; then
         warn "pnpm not found. Installing pnpm..."
-        npm install -g pnpm
+        if [[ $EUID -eq 0 ]]; then
+            # Install pnpm globally for root
+            npm install -g pnpm
+        else
+            npm install -g pnpm
+        fi
     fi
     
     # Verify Node version
@@ -101,6 +121,23 @@ check_ports() {
     done
 }
 
+# Fix file ownership if running as root via sudo
+fix_ownership() {
+    if [[ $EUID -eq 0 && -n "$SUDO_USER" ]]; then
+        log "Fixing file ownership for user: $SUDO_USER"
+        
+        # Get the original user's UID and GID
+        SUDO_UID=$(id -u "$SUDO_USER")
+        SUDO_GID=$(id -g "$SUDO_USER")
+        
+        # Fix ownership of key directories and files
+        chown -R "$SUDO_UID:$SUDO_GID" . 2>/dev/null || true
+        chown -R "$SUDO_UID:$SUDO_GID" ~/.docker 2>/dev/null || true
+        chown -R "$SUDO_UID:$SUDO_GID" ~/.npm 2>/dev/null || true
+        chown -R "$SUDO_UID:$SUDO_GID" ~/.pnpm 2>/dev/null || true
+    fi
+}
+
 # Setup environment
 setup_environment() {
     log "Setting up environment..."
@@ -115,6 +152,9 @@ setup_environment() {
     mkdir -p data/traefik/dynamic
     mkdir -p data/postgres
     mkdir -p data/redis
+    
+    # Fix ownership after creating directories
+    fix_ownership
     
     # Create basic Traefik config if it doesn't exist
     if [[ ! -f data/traefik/traefik.yml ]]; then
@@ -181,13 +221,26 @@ start_services() {
 # Install dependencies and setup
 setup_application() {
     log "Installing dependencies..."
-    pnpm install --frozen-lockfile
+    
+    # Handle pnpm for root
+    if [[ $EUID -eq 0 ]]; then
+        # Use --unsafe-perm for root to avoid permission issues
+        pnpm install --frozen-lockfile --unsafe-perm || pnpm install --frozen-lockfile
+    else
+        pnpm install --frozen-lockfile
+    fi
+    
+    # Fix ownership after installing dependencies
+    fix_ownership
     
     log "Running application setup..."
     pnpm run dokploy:setup
     
     log "Running server script..."
     timeout 10s pnpm run server:script || log "Server script completed (or timed out safely)"
+    
+    # Final ownership fix
+    fix_ownership
 }
 
 # Start development server
@@ -223,7 +276,16 @@ setup_only() {
     setup_environment
     
     log "Installing dependencies..."
-    pnpm install --frozen-lockfile
+    
+    # Handle pnpm for root
+    if [[ $EUID -eq 0 ]]; then
+        pnpm install --frozen-lockfile --unsafe-perm || pnpm install --frozen-lockfile
+    else
+        pnpm install --frozen-lockfile
+    fi
+    
+    # Fix ownership after setup
+    fix_ownership
     
     log "Setup complete! Run './start.sh --dev' to start services"
 }

@@ -6,12 +6,12 @@ A simplified, one-command deployment version of Dokploy - a free, self-hostable 
 
 **One-command setup:**
 ```bash
-git clone <your-repo-url> && cd othcloud && make dev
+git clone https://github.com/OverTimeHosting/othcloud.git && cd othcloud && make dev
 ```
 
 **Or using the installer:**
 ```bash
-curl -sSL https://raw.githubusercontent.com/your-username/othcloud/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/OverTimeHosting/othcloud/main/install.sh | bash
 ```
 
 Your application will be running at `http://localhost:3000` 🎉
@@ -37,6 +37,12 @@ Your application will be running at `http://localhost:3000` 🎉
 ./start.sh --stop    # Stop services
 ./start.sh --clean   # Clean everything
 ./start.sh --setup   # Install dependencies only
+```
+
+**Root Support:** All commands work with `sudo` for server deployments:
+```bash
+sudo ./start.sh --dev    # Works on servers/containers
+sudo make dev           # Also works
 ```
 
 ## 🌐 Access Points
@@ -93,6 +99,7 @@ This streamlined version provides:
 - ✅ **Development optimized** - Fast startup and hot reload
 - ✅ **Easy cleanup** - One command to reset everything
 - ✅ **Better error handling** - Clear error messages and recovery
+- ✅ **Root support** - Works with sudo for server deployments
 
 ## 📋 System Requirements
 

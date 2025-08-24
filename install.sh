@@ -13,8 +13,8 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# Configuration - Update these with your actual repo details
-REPO_URL="${REPO_URL:-https://github.com/your-username/othcloud.git}"
+# Configuration
+REPO_URL="${REPO_URL:-https://github.com/OverTimeHosting/othcloud.git}"
 INSTALL_DIR="${INSTALL_DIR:-othcloud}"
 
 print_banner() {
@@ -174,6 +174,13 @@ show_completion() {
 # Main installation
 main() {
     print_banner
+    
+    # Check if running as root
+    if [[ $EUID -eq 0 ]]; then
+        warn "Running as root detected. This is allowed but not recommended."
+        warn "Consider creating a non-root user for better security."
+        sleep 2
+    fi
     
     log "Starting OthCloud installation..."
     echo ""

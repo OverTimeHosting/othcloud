@@ -17,27 +17,27 @@ help: ## Show this help message
 
 install: ## Install dependencies and setup environment
 	@echo "$(YELLOW)Installing OthCloud...$(NC)"
-	@chmod +x start.sh
+	@chmod +x start.sh 2>/dev/null || true
 	@./start.sh --setup
 
 dev: ## Start in development mode
 	@echo "$(YELLOW)Starting OthCloud in development mode...$(NC)"
-	@chmod +x start.sh
+	@chmod +x start.sh 2>/dev/null || true
 	@./start.sh --dev
 
 prod: ## Start in production mode
 	@echo "$(YELLOW)Starting OthCloud in production mode...$(NC)"
-	@chmod +x start.sh
+	@chmod +x start.sh 2>/dev/null || true
 	@./start.sh --prod
 
 stop: ## Stop all services
 	@echo "$(YELLOW)Stopping OthCloud services...$(NC)"
-	@chmod +x start.sh
+	@chmod +x start.sh 2>/dev/null || true
 	@./start.sh --stop
 
 clean: ## Clean up everything (containers, volumes, dependencies)
 	@echo "$(RED)Cleaning up everything...$(NC)"
-	@chmod +x start.sh
+	@chmod +x start.sh 2>/dev/null || true
 	@./start.sh --clean
 
 logs: ## Show logs from all services
