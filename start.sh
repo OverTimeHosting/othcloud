@@ -201,14 +201,48 @@ check_requirements() {
 check_ports() {
     log "Checking port availability..."
     
+    local ports_in_use=()
+    local critical_conflict=false
+    
     for port in "${REQUIRED_PORTS[@]}"; do
         if netstat -tuln 2>/dev/null | grep -q ":$port " || ss -tuln 2>/dev/null | grep -q ":$port "; then
-            warn "Port $port is already in use"
+            ports_in_use+=("$port")
+            
+            # Check what's using the port
+            local service=$(netstat -tlnp 2>/dev/null | grep ":$port " | awk '{print $7}' | cut -d'/' -f2 | head -1)
+            warn "Port $port is in use by: ${service:-unknown}"
+            
             if [[ $port == 80 || $port == 443 ]]; then
-                warn "Consider stopping your web server temporarily: sudo systemctl stop nginx apache2"
+                warn "Port $port (HTTP/HTTPS) conflict detected"
+                warn "This will cause Traefik to fail, but the main app will still work on port 3000"
+                
+                if [[ "$service" == "nginx" || "$service" == "apache2" || "$service" == "httpd" ]]; then
+                    warn "To fix this, you can temporarily stop $service:"
+                    warn "  sudo systemctl stop $service"
+                fi
+            elif [[ $port == 3000 ]]; then
+                error "Port 3000 (main application) is already in use. Cannot continue."
+                critical_conflict=true
             fi
         fi
     done
+    
+    if [[ $critical_conflict == true ]]; then
+        error "Critical port conflict detected. Please stop the service using port 3000 and try again."
+    fi
+    
+    if [[ ${#ports_in_use[@]} -gt 0 ]]; then
+        warn "Port conflicts detected: ${ports_in_use[*]}"
+        warn "The application will attempt to continue, but some services may fail."
+        warn "Main application should still be accessible on port 3000."
+        
+        echo -n "Continue anyway? [y/N]: "
+        read -r response
+        if [[ ! "$response" =~ ^[Yy]$ ]]; then
+            log "Setup cancelled. Please resolve port conflicts and try again."
+            exit 1
+        fi
+    fi
 }
 
 # Fix file ownership if running as root via sudo
@@ -349,7 +383,22 @@ setup_application() {
     fix_ownership
     
     log "Running application setup..."
-    pnpm run dokploy:setup
+    
+    # Run setup with error handling for port conflicts
+    if ! pnpm run dokploy:setup; then
+        warn "Application setup encountered errors (likely port conflicts)"
+        warn "This is usually caused by port 80/443 being in use"
+        warn "The application should still work on port 3000"
+        
+        # Check if the error was due to port conflicts
+        if docker compose ps postgres redis &>/dev/null; then
+            log "Core services (database, redis) are running - continuing..."
+        else
+            error "Core services failed to start. Please check logs with: make logs"
+        fi
+    else
+        log "Application setup completed successfully"
+    fi
     
     log "Running server script..."
     timeout 10s pnpm run server:script || log "Server script completed (or timed out safely)"

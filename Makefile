@@ -110,3 +110,8 @@ verify: ## Verify directory structure and setup
 	@./verify.sh
 
 check: verify ## Alias for verify
+
+fix-ports: ## Check and fix port conflicts
+	@echo "$(YELLOW)Checking for port conflicts...$(NC)"
+	@chmod +x fix-ports.sh 2>/dev/null || true
+	@./fix-ports.sh
