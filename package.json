@@ -37,9 +37,7 @@
 		"reset": "make reset",
 		"studio": "pnpm --filter=dokploy run studio",
 		"verify": "./verify.sh",
-		"check-setup": "./verify.sh",
-		"fix-ports": "./fix-ports.sh",
-		"port-check": "./fix-ports.sh"
+		"check-setup": "./verify.sh"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.1.1",

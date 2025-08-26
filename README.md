@@ -35,8 +35,6 @@ Your application will be running at `http://localhost:3000` 🎉
 | `make logs` | Show service logs |
 | `make status` | Show service status |
 | `make restart` | Restart services |
-| `make verify` | Check setup and files |
-| `make fix-ports` | Resolve port conflicts |
 | `make help` | Show all commands |
 
 ## 🔧 Manual Commands
@@ -147,21 +145,10 @@ sudo make dev
 ```
 
 ### 🔌 Port Conflicts
-
-If you see `Bind for 0.0.0.0:80 failed: port is already allocated`:
-
 ```bash
-# Check for port conflicts
-make fix-ports
-
-# Quick fix - stop common web servers
-sudo systemctl stop nginx apache2
-
-# Then try again
-sudo make dev
+make ports          # Check port usage
+sudo systemctl stop nginx apache2  # Stop web servers if needed
 ```
-
-> 💡 **Note**: Even with port 80/443 conflicts, your app will work on `http://localhost:3000`. Only Traefik (reverse proxy) will be affected.
 
 ### 🐛 Other Issues
 ```bash
