@@ -1,7 +1,5 @@
 {
-	"name": "othcloud",
-	"description": "Streamlined Dokploy build - One-command deployment platform",
-	"version": "1.0.0",
+	"name": "dokploy",
 	"private": true,
 	"workspaces": [
 		"apps/*",
@@ -22,22 +20,7 @@
 		"build": "pnpm -r run build",
 		"format-and-lint": "biome check .",
 		"check": "biome check --write --no-errors-on-unmatched --files-ignore-unknown=true",
-		"format-and-lint:fix": "biome check . --write",
-		"start": "./start.sh --dev",
-		"start:quick": "./start.sh --dev",
-		"start:prod": "./start.sh --prod",
-		"stop": "./start.sh --stop",
-		"clean": "./start.sh --clean",
-		"setup": "./start.sh --setup",
-		"dev": "make dev",
-		"prod": "make prod",
-		"logs": "docker compose logs -f",
-		"status": "docker compose ps",
-		"restart": "make restart",
-		"reset": "make reset",
-		"studio": "pnpm --filter=dokploy run studio",
-		"verify": "./verify.sh",
-		"check-setup": "./verify.sh"
+		"format-and-lint:fix": "biome check . --write"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.1.1",
