@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# OTHcloud Installation Script
+# OTHcloud Installation Script with Memory Optimization
 # One-line install: curl -sSL https://raw.githubusercontent.com/OverTimeHosting/othcloud/main/install.sh | bash
 
 set -e
@@ -61,7 +61,7 @@ check_root() {
     fi
 }
 
-# Check system compatibility
+# Check system requirements
 check_system() {
     if [ "$(uname)" = "Darwin" ]; then
         log_error "This script must be run on Linux"
@@ -72,9 +72,31 @@ check_system() {
         log_error "This script cannot be run inside a Docker container"
         exit 1
     fi
+    
+    # Check memory
+    local total_mem=$(free -m | awk 'NR==2{printf "%.0f", $2}')
+    local available_mem=$(free -m | awk 'NR==2{printf "%.0f", $7}')
+    
+    log_info "System memory: ${total_mem}MB total, ${available_mem}MB available"
+    
+    if [ "$total_mem" -lt 2000 ]; then
+        log_error "Insufficient memory. Minimum 2GB RAM required (4GB+ recommended)"
+        exit 1
+    elif [ "$total_mem" -lt 4000 ]; then
+        log_warning "Low memory detected. 4GB+ RAM recommended for optimal performance"
+    fi
+    
+    # Check disk space
+    local available_disk=$(df / | awk 'NR==2{printf "%.0f", $4/1024}')
+    if [ "$available_disk" -lt 5000 ]; then
+        log_error "Insufficient disk space. Minimum 5GB free space required"
+        exit 1
+    fi
+    
+    log_info "System checks passed"
 }
 
-# Check port availability (warn but don't fail)
+# Check port availability
 check_ports() {
     local ports=("80" "443" "3000")
     local conflicts=0
@@ -89,8 +111,12 @@ check_ports() {
     done
     
     if [ $conflicts -eq 1 ]; then
-        log_warning "Port 3000 conflict detected. Services may not start properly."
-        log_info "You can stop conflicting services with: systemctl stop nginx apache2"
+        log_warning "Port 3000 conflict detected. You may need to stop other services."
+        read -p "Continue anyway? [y/N]: " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            exit 1
+        fi
     fi
 }
 
@@ -112,16 +138,17 @@ install_dependencies() {
         lsb-release \
         apt-transport-https \
         software-properties-common \
-        openssl
+        openssl \
+        htop \
+        net-tools
 
     log_success "System dependencies installed"
 }
 
-# Install Docker
+# Install Docker with optimal settings
 install_docker() {
     if command_exists docker; then
         log_info "Docker already installed"
-        # Ensure Docker is running
         systemctl start docker >/dev/null 2>&1 || true
         systemctl enable docker >/dev/null 2>&1 || true
         return
@@ -129,17 +156,34 @@ install_docker() {
 
     log_info "Installing Docker..."
     
-    # Use the official Docker install script
+    # Use official Docker install script
     curl -fsSL https://get.docker.com | sh
 
     # Start and enable Docker
     systemctl start docker
     systemctl enable docker
+    
+    # Optimize Docker for build performance
+    mkdir -p /etc/docker
+    cat > /etc/docker/daemon.json << 'EOF'
+{
+    "log-driver": "json-file",
+    "log-opts": {
+        "max-size": "10m",
+        "max-file": "3"
+    },
+    "storage-driver": "overlay2",
+    "experimental": false
+}
+EOF
+    
+    systemctl restart docker
+    sleep 3
 
-    log_success "Docker installed successfully"
+    log_success "Docker installed and optimized"
 }
 
-# Install Node.js
+# Install Node.js (for potential local builds)
 install_nodejs() {
     if command_exists node; then
         local node_version=$(node -v | sed 's/v//')
@@ -152,26 +196,11 @@ install_nodejs() {
 
     log_info "Installing Node.js..."
     
-    # Install NodeSource repository
+    # Install NodeSource repository for Node 20
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
     apt-get install -y nodejs
 
     log_success "Node.js installed successfully"
-}
-
-# Install PNPM
-install_pnpm() {
-    if command_exists pnpm; then
-        log_info "PNPM already installed"
-        return
-    fi
-
-    log_info "Installing PNPM..."
-    
-    # Enable corepack and install pnpm
-    corepack enable 2>/dev/null || npm install -g pnpm
-
-    log_success "PNPM installed successfully"
 }
 
 # Get server IP
@@ -202,54 +231,26 @@ get_server_ip() {
     echo "$ip"
 }
 
-# Setup Docker Swarm
-setup_docker_swarm() {
-    log_info "Setting up Docker Swarm..."
+# Setup Docker network
+setup_docker_network() {
+    log_info "Setting up Docker networking..."
     
-    # Leave any existing swarm (ignore errors)
-    docker swarm leave --force 2>/dev/null || true
-    
-    local advertise_addr="${ADVERTISE_ADDR:-$(get_server_ip)}"
-    log_info "Using advertise address: $advertise_addr"
-    
-    # Check if running in Proxmox LXC container
-    if is_proxmox_lxc; then
-        log_warning "Detected Proxmox LXC container environment!"
-        log_info "This may affect Docker Swarm networking"
-        sleep 3
-    fi
-    
-    # Initialize swarm
-    if ! docker swarm init --advertise-addr "$advertise_addr" 2>/dev/null; then
-        log_warning "Docker Swarm initialization failed, trying without advertise address..."
-        if ! docker swarm init 2>/dev/null; then
-            log_warning "Docker Swarm not available, using standalone Docker mode"
-            return 1
-        fi
-    fi
-    
-    log_success "Docker Swarm initialized"
-    
-    # Create overlay network (ignore if exists)
+    # Create network (remove if exists)
     docker network rm othcloud-network 2>/dev/null || true
-    if ! docker network create --driver overlay --attachable othcloud-network 2>/dev/null; then
-        log_warning "Failed to create overlay network, creating bridge network"
-        docker network create othcloud-network 2>/dev/null || true
-    fi
+    docker network create othcloud-network 2>/dev/null || true
     
     log_success "Docker network created"
-    return 0
 }
 
-# Clone repository and prepare environment
-clone_repository() {
-    log_info "Cloning OTHcloud repository..."
+# Clone and prepare repository
+prepare_repository() {
+    log_info "Preparing OTHcloud repository..."
     
-    # Remove existing directory if it exists
+    # Remove existing directory
     rm -rf "$INSTALL_DIR"
     mkdir -p "$INSTALL_DIR"
     
-    # Clone the repository
+    # Clone repository
     if ! git clone -b "$REPO_BRANCH" "$REPO_URL" "$INSTALL_DIR"; then
         log_error "Failed to clone repository"
         exit 1
@@ -257,16 +258,16 @@ clone_repository() {
     
     cd "$INSTALL_DIR"
     
-    # Create necessary directories
+    # Create configuration directories
     mkdir -p /etc/othcloud
     chmod 755 /etc/othcloud
     
-    # Generate secure passwords and secrets
+    # Generate secure credentials
     local postgres_password=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)
     local jwt_secret=$(openssl rand -base64 32)
     local ssh_encryption_key=$(openssl rand -base64 32)
     
-    # Create .env.production file
+    # Create production environment
     log_info "Creating production environment configuration..."
     cat > .env.production << EOF
 # Database
@@ -279,7 +280,11 @@ SSH_ENCRYPTION_KEY="${ssh_encryption_key}"
 # Redis
 REDIS_URL="redis://othcloud-redis:6379"
 
-# Cloudflare (optional - configure after installation)
+# Environment
+NODE_ENV=production
+NEXTAUTH_URL="http://localhost:3000"
+
+# Optional: Configure after installation
 CLOUDFLARE_API_TOKEN=""
 CLOUDFLARE_ZONE_ID=""
 BASE_DOMAIN=""
@@ -287,278 +292,227 @@ BASE_DOMAIN=""
 # Timeouts
 SSH_TIMEOUT=30000
 DOCKER_TIMEOUT=30000
-
-# Environment
-NODE_ENV=production
-NEXTAUTH_URL="http://localhost:3000"
 EOF
     
-    # Save credentials for later use
-    cat > /etc/othcloud/db-credentials << EOF
+    # Save credentials for services
+    cat > /etc/othcloud/credentials << EOF
 POSTGRES_USER=othcloud
 POSTGRES_DB=othcloud
 POSTGRES_PASSWORD=${postgres_password}
 DATABASE_URL=postgresql://othcloud:${postgres_password}@othcloud-postgres:5432/othcloud
-EOF
-    chmod 600 /etc/othcloud/db-credentials
-    
-    cat > /etc/othcloud/app-secrets << EOF
 JWT_SECRET=${jwt_secret}
 SSH_ENCRYPTION_KEY=${ssh_encryption_key}
 REDIS_URL=redis://othcloud-redis:6379
 EOF
-    chmod 600 /etc/othcloud/app-secrets
+    chmod 600 /etc/othcloud/credentials
     
     log_success "Repository cloned and configured successfully"
 }
 
-# Build Docker image
+# Build Docker image with memory optimization
 build_docker_image() {
     log_info "Building OTHcloud Docker image..."
     
     cd "$INSTALL_DIR"
     
-    # Build the Docker image with retry logic
+    # Check system resources
+    local available_mem=$(free -m | awk 'NR==2{printf "%.0f", $7}')
+    local total_mem=$(free -m | awk 'NR==2{printf "%.0f", $2}')
+    local available_disk=$(df / | awk 'NR==2{printf "%.0f", $4/1024}')
+    
+    log_info "Available resources: ${available_mem}MB RAM, ${available_disk}MB disk"
+    
+    # Optimize build parameters based on available memory
+    local build_memory="2g"
+    local node_memory="4096"
+    
+    if [ "$total_mem" -lt 4000 ]; then
+        build_memory="1g"
+        node_memory="2048"
+        log_warning "Using reduced memory settings for build"
+    fi
+    
+    # Set Node.js memory limits
+    export NODE_OPTIONS="--max_old_space_size=${node_memory} --max-semi-space-size=128"
+    
     local max_attempts=3
     local attempt=1
     
     while [ $attempt -le $max_attempts ]; do
         log_info "Build attempt $attempt of $max_attempts..."
         
-        if docker build -t "$DOCKER_IMAGE_NAME:latest" .; then
-            log_success "Docker image built successfully"
+        # Clean up before retry attempts
+        if [ $attempt -gt 1 ]; then
+            log_info "Cleaning up Docker system..."
+            docker system prune -f --volumes 2>/dev/null || true
+            # Force garbage collection
+            sync && echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+        fi
+        
+        # Try building with optimized settings
+        local build_success=false
+        
+        if timeout 1800 docker build \
+            --build-arg NODE_OPTIONS="--max_old_space_size=${node_memory} --max-semi-space-size=128" \
+            --build-arg NODE_ENV=production \
+            --memory="${build_memory}" \
+            --memory-swap="${build_memory}" \
+            --shm-size=256m \
+            --no-cache \
+            -t "${DOCKER_IMAGE_NAME}:latest" . 2>&1 | tee /tmp/docker-build.log; then
+            
+            log_success "Docker image built successfully on attempt $attempt"
+            rm -f /tmp/docker-build.log
             return 0
         else
             log_warning "Build attempt $attempt failed"
-            if [ $attempt -eq $max_attempts ]; then
-                log_error "Failed to build Docker image after $max_attempts attempts"
-                log_info "You can try running the build manually with: docker build -t $DOCKER_IMAGE_NAME:latest ."
-                exit 1
+            
+            # Check for specific error types
+            if grep -q "JavaScript heap out of memory" /tmp/docker-build.log 2>/dev/null; then
+                log_warning "Memory exhaustion detected"
+                if [ "$node_memory" -gt 1024 ]; then
+                    node_memory=$((node_memory - 512))
+                    log_info "Reducing Node.js memory limit to ${node_memory}MB"
+                fi
             fi
-            attempt=$((attempt + 1))
-            sleep 5
         fi
+        
+        attempt=$((attempt + 1))
+        [ $attempt -le $max_attempts ] && sleep 10
     done
+    
+    # Build failed, try fallback strategies
+    log_error "Docker build failed after $max_attempts attempts"
+    log_info "Trying fallback strategies..."
+    
+    # Fallback 1: Use pre-built image
+    log_info "Attempting to use pre-built dokploy image..."
+    if docker pull dokploy/dokploy:latest 2>/dev/null; then
+        docker tag dokploy/dokploy:latest "${DOCKER_IMAGE_NAME}:latest"
+        log_success "Using pre-built image as fallback"
+        return 0
+    fi
+    
+    # Fallback 2: Try pulling from Docker Hub if available
+    log_info "Attempting to pull from registry..."
+    if docker pull "${DOCKER_IMAGE_NAME}:latest" 2>/dev/null; then
+        log_success "Pulled image from registry"
+        return 0
+    fi
+    
+    # All attempts failed
+    log_error "All build strategies failed!"
+    log_error "Build log (last 20 lines):"
+    tail -20 /tmp/docker-build.log 2>/dev/null || true
+    log_error ""
+    log_error "System requirements not met. Please ensure:"
+    log_error "  • RAM: 4GB+ total memory (you have: ${total_mem}MB)"
+    log_error "  • Disk: 10GB+ free space (you have: ${available_disk}MB)"
+    log_error "  • CPU: 2+ cores recommended"
+    log_error ""
+    log_error "Troubleshooting steps:"
+    log_error "  1. Free up memory: 'free -h && docker system prune -a'"
+    log_error "  2. Increase swap: 'sudo fallocate -l 2G /swapfile && sudo swapon /swapfile'"
+    log_error "  3. Use a more powerful server"
+    log_error "  4. Try manual installation: 'git clone && docker-compose up'"
+    
+    exit 1
 }
 
-# Setup database
+# Setup PostgreSQL database
 setup_database() {
     log_info "Setting up PostgreSQL database..."
     
-    # Source credentials
-    source /etc/othcloud/db-credentials
+    source /etc/othcloud/credentials
     
-    # Create PostgreSQL service (swarm or standalone)
-    if docker info 2>/dev/null | grep -q "Swarm: active"; then
-        # Use Docker Swarm
-        docker service create \
-            --name othcloud-postgres \
-            --constraint 'node.role==manager' \
-            --network othcloud-network \
-            --env POSTGRES_USER=othcloud \
-            --env POSTGRES_DB=othcloud \
-            --env POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
-            --mount type=volume,source=othcloud-postgres-data,target=/var/lib/postgresql/data \
-            postgres:16 2>/dev/null || {
-                log_warning "Swarm service creation failed, using docker run..."
-                docker run -d \
-                    --name othcloud-postgres \
-                    --network othcloud-network \
-                    --env POSTGRES_USER=othcloud \
-                    --env POSTGRES_DB=othcloud \
-                    --env POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
-                    -v othcloud-postgres-data:/var/lib/postgresql/data \
-                    --restart unless-stopped \
-                    postgres:16
-            }
-    else
-        # Use standalone Docker
-        docker run -d \
-            --name othcloud-postgres \
-            --network othcloud-network \
-            --env POSTGRES_USER=othcloud \
-            --env POSTGRES_DB=othcloud \
-            --env POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
-            -v othcloud-postgres-data:/var/lib/postgresql/data \
-            --restart unless-stopped \
-            postgres:16 2>/dev/null || {
-                # Remove existing container if it exists
-                docker rm -f othcloud-postgres 2>/dev/null || true
-                docker run -d \
-                    --name othcloud-postgres \
-                    --network othcloud-network \
-                    --env POSTGRES_USER=othcloud \
-                    --env POSTGRES_DB=othcloud \
-                    --env POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
-                    -v othcloud-postgres-data:/var/lib/postgresql/data \
-                    --restart unless-stopped \
-                    postgres:16
-            }
-    fi
+    # Remove existing container
+    docker rm -f othcloud-postgres 2>/dev/null || true
+    
+    # Create PostgreSQL container
+    docker run -d \
+        --name othcloud-postgres \
+        --network othcloud-network \
+        --restart unless-stopped \
+        -e POSTGRES_USER="$POSTGRES_USER" \
+        -e POSTGRES_DB="$POSTGRES_DB" \
+        -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+        -v othcloud-postgres-data:/var/lib/postgresql/data \
+        postgres:16-alpine
+    
+    # Wait for database to be ready
+    log_info "Waiting for database to initialize..."
+    for i in {1..30}; do
+        if docker exec othcloud-postgres pg_isready -U "$POSTGRES_USER" >/dev/null 2>&1; then
+            log_success "Database is ready"
+            break
+        fi
+        sleep 2
+    done
     
     log_success "PostgreSQL database setup completed"
 }
 
-# Setup Redis
+# Setup Redis cache
 setup_redis() {
     log_info "Setting up Redis cache..."
     
-    # Create Redis service (swarm or standalone)
-    if docker info 2>/dev/null | grep -q "Swarm: active"; then
-        # Use Docker Swarm
-        docker service create \
-            --name othcloud-redis \
-            --constraint 'node.role==manager' \
-            --network othcloud-network \
-            --mount type=volume,source=othcloud-redis-data,target=/data \
-            redis:7-alpine 2>/dev/null || {
-                log_warning "Swarm service creation failed, using docker run..."
-                docker run -d \
-                    --name othcloud-redis \
-                    --network othcloud-network \
-                    -v othcloud-redis-data:/data \
-                    --restart unless-stopped \
-                    redis:7-alpine
-            }
-    else
-        # Use standalone Docker
-        docker run -d \
-            --name othcloud-redis \
-            --network othcloud-network \
-            -v othcloud-redis-data:/data \
-            --restart unless-stopped \
-            redis:7-alpine 2>/dev/null || {
-                # Remove existing container if it exists
-                docker rm -f othcloud-redis 2>/dev/null || true
-                docker run -d \
-                    --name othcloud-redis \
-                    --network othcloud-network \
-                    -v othcloud-redis-data:/data \
-                    --restart unless-stopped \
-                    redis:7-alpine
-            }
-    fi
+    # Remove existing container
+    docker rm -f othcloud-redis 2>/dev/null || true
+    
+    # Create Redis container
+    docker run -d \
+        --name othcloud-redis \
+        --network othcloud-network \
+        --restart unless-stopped \
+        -v othcloud-redis-data:/data \
+        redis:7-alpine redis-server --appendonly yes
     
     log_success "Redis cache setup completed"
 }
 
-# Deploy OTHcloud application
+# Deploy main application
 deploy_application() {
     log_info "Deploying OTHcloud application..."
     
-    # Source credentials
-    source /etc/othcloud/db-credentials
-    source /etc/othcloud/app-secrets
+    source /etc/othcloud/credentials
     
-    # Check if running in Proxmox LXC container
-    local endpoint_mode=""
-    if is_proxmox_lxc; then
-        endpoint_mode="--endpoint-mode dnsrr"
-    fi
+    # Remove existing container
+    docker rm -f othcloud-app 2>/dev/null || true
     
-    # Deploy application (swarm or standalone)
-    if docker info 2>/dev/null | grep -q "Swarm: active"; then
-        # Use Docker Swarm
-        docker service create \
-            --name othcloud-app \
-            --replicas 1 \
-            --network othcloud-network \
-            --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
-            --mount type=bind,source=/etc/othcloud,target=/etc/othcloud \
-            --mount type=volume,source=othcloud-data,target=/app/data \
-            --publish published=3000,target=3000,mode=host \
-            --update-parallelism 1 \
-            --update-order stop-first \
-            --constraint 'node.role == manager' \
-            --env NODE_ENV=production \
-            --env DATABASE_URL="$DATABASE_URL" \
-            --env JWT_SECRET="$JWT_SECRET" \
-            --env SSH_ENCRYPTION_KEY="$SSH_ENCRYPTION_KEY" \
-            --env REDIS_URL="$REDIS_URL" \
-            --env CLOUDFLARE_API_TOKEN="" \
-            --env CLOUDFLARE_ZONE_ID="" \
-            --env BASE_DOMAIN="" \
-            --env SSH_TIMEOUT=30000 \
-            --env DOCKER_TIMEOUT=30000 \
-            $endpoint_mode \
-            "$DOCKER_IMAGE_NAME:latest" 2>/dev/null || {
-                log_warning "Swarm service creation failed, using docker run..."
-                docker run -d \
-                    --name othcloud-app \
-                    --network othcloud-network \
-                    -v /var/run/docker.sock:/var/run/docker.sock \
-                    -v /etc/othcloud:/etc/othcloud \
-                    -v othcloud-data:/app/data \
-                    -p 3000:3000 \
-                    --restart unless-stopped \
-                    --env NODE_ENV=production \
-                    --env DATABASE_URL="$DATABASE_URL" \
-                    --env JWT_SECRET="$JWT_SECRET" \
-                    --env SSH_ENCRYPTION_KEY="$SSH_ENCRYPTION_KEY" \
-                    --env REDIS_URL="$REDIS_URL" \
-                    --env CLOUDFLARE_API_TOKEN="" \
-                    --env CLOUDFLARE_ZONE_ID="" \
-                    --env BASE_DOMAIN="" \
-                    --env SSH_TIMEOUT=30000 \
-                    --env DOCKER_TIMEOUT=30000 \
-                    "$DOCKER_IMAGE_NAME:latest"
-            }
-    else
-        # Use standalone Docker
-        docker run -d \
-            --name othcloud-app \
-            --network othcloud-network \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -v /etc/othcloud:/etc/othcloud \
-            -v othcloud-data:/app/data \
-            -p 3000:3000 \
-            --restart unless-stopped \
-            --env NODE_ENV=production \
-            --env DATABASE_URL="$DATABASE_URL" \
-            --env JWT_SECRET="$JWT_SECRET" \
-            --env SSH_ENCRYPTION_KEY="$SSH_ENCRYPTION_KEY" \
-            --env REDIS_URL="$REDIS_URL" \
-            --env CLOUDFLARE_API_TOKEN="" \
-            --env CLOUDFLARE_ZONE_ID="" \
-            --env BASE_DOMAIN="" \
-            --env SSH_TIMEOUT=30000 \
-            --env DOCKER_TIMEOUT=30000 \
-            "$DOCKER_IMAGE_NAME:latest" 2>/dev/null || {
-                # Remove existing container if it exists
-                docker rm -f othcloud-app 2>/dev/null || true
-                docker run -d \
-                    --name othcloud-app \
-                    --network othcloud-network \
-                    -v /var/run/docker.sock:/var/run/docker.sock \
-                    -v /etc/othcloud:/etc/othcloud \
-                    -v othcloud-data:/app/data \
-                    -p 3000:3000 \
-                    --restart unless-stopped \
-                    --env NODE_ENV=production \
-                    --env DATABASE_URL="$DATABASE_URL" \
-                    --env JWT_SECRET="$JWT_SECRET" \
-                    --env SSH_ENCRYPTION_KEY="$SSH_ENCRYPTION_KEY" \
-                    --env REDIS_URL="$REDIS_URL" \
-                    --env CLOUDFLARE_API_TOKEN="" \
-                    --env CLOUDFLARE_ZONE_ID="" \
-                    --env BASE_DOMAIN="" \
-                    --env SSH_TIMEOUT=30000 \
-                    --env DOCKER_TIMEOUT=30000 \
-                    "$DOCKER_IMAGE_NAME:latest"
-            }
-    fi
+    # Deploy application container
+    docker run -d \
+        --name othcloud-app \
+        --network othcloud-network \
+        --restart unless-stopped \
+        -v /var/run/docker.sock:/var/run/docker.sock:ro \
+        -v /etc/othcloud:/etc/othcloud \
+        -v othcloud-data:/app/data \
+        -p 3000:3000 \
+        -e NODE_ENV=production \
+        -e DATABASE_URL="$DATABASE_URL" \
+        -e JWT_SECRET="$JWT_SECRET" \
+        -e SSH_ENCRYPTION_KEY="$SSH_ENCRYPTION_KEY" \
+        -e REDIS_URL="$REDIS_URL" \
+        -e SSH_TIMEOUT=30000 \
+        -e DOCKER_TIMEOUT=30000 \
+        "${DOCKER_IMAGE_NAME}:latest"
     
-    log_success "OTHcloud application deployed successfully"
+    log_success "Application deployed successfully"
 }
 
-# Setup Traefik reverse proxy (optional)
+# Setup reverse proxy
 setup_traefik() {
+    # Skip if ports are in use
+    if ss -tulnp | grep -E ":80|:443" >/dev/null; then
+        log_warning "Ports 80/443 in use, skipping Traefik setup"
+        return
+    fi
+    
     log_info "Setting up Traefik reverse proxy..."
     
-    # Create Traefik configuration directory
-    mkdir -p /etc/othcloud/traefik/dynamic
+    mkdir -p /etc/othcloud/traefik
     
-    # Create basic Traefik configuration
+    # Basic Traefik configuration
     cat > /etc/othcloud/traefik/traefik.yml << 'EOF'
 api:
   dashboard: true
@@ -578,75 +532,61 @@ providers:
 log:
   level: INFO
 EOF
-
-    # Deploy Traefik (skip if ports are occupied)
-    if ! ss -tulnp | grep -E ":80|:443" >/dev/null; then
-        docker run -d \
-            --name othcloud-traefik \
-            --restart unless-stopped \
-            -v /etc/othcloud/traefik/traefik.yml:/etc/traefik/traefik.yml:ro \
-            -v /var/run/docker.sock:/var/run/docker.sock:ro \
-            -p 80:80/tcp \
-            -p 443:443/tcp \
-            -p 8080:8080/tcp \
-            traefik:v3.1.2 2>/dev/null || {
-                log_warning "Traefik deployment failed - ports may be in use"
-            }
-        
-        # Connect to network if successful
-        docker network connect othcloud-network othcloud-traefik 2>/dev/null || true
-        
-        log_success "Traefik reverse proxy setup completed"
-    else
-        log_warning "Ports 80/443 are in use, skipping Traefik setup"
-    fi
+    
+    # Deploy Traefik
+    docker run -d \
+        --name othcloud-traefik \
+        --network othcloud-network \
+        --restart unless-stopped \
+        -v /etc/othcloud/traefik/traefik.yml:/etc/traefik/traefik.yml:ro \
+        -v /var/run/docker.sock:/var/run/docker.sock:ro \
+        -p 80:80 \
+        -p 443:443 \
+        -p 8080:8080 \
+        traefik:v3.1.2
+    
+    log_success "Traefik reverse proxy deployed"
 }
 
-# Wait for services
+# Wait for services to be healthy
 wait_for_services() {
     log_info "Waiting for services to be ready..."
     
-    local retries=30
-    local wait_time=10
+    local max_wait=120
+    local waited=0
     
-    # Wait for database to be ready
-    for i in $(seq 1 10); do
-        if docker logs othcloud-postgres 2>&1 | grep -q "database system is ready"; then
-            break
-        fi
-        log_info "Waiting for database... ($i/10)"
-        sleep 5
-    done
-    
-    # Wait for application to be ready
-    for i in $(seq 1 $retries); do
-        if curl -s http://localhost:3000 > /dev/null 2>&1; then
+    while [ $waited -lt $max_wait ]; do
+        if curl -sf http://localhost:3000 >/dev/null 2>&1; then
             log_success "OTHcloud is ready!"
             return 0
         fi
         
-        log_info "Waiting for application... ($i/$retries)"
-        sleep $wait_time
+        sleep 5
+        waited=$((waited + 5))
+        
+        if [ $((waited % 30)) -eq 0 ]; then
+            log_info "Still waiting... (${waited}s)"
+        fi
     done
     
-    log_warning "Application may still be starting up. Check logs with: docker logs othcloud-app"
+    log_warning "Service health check timeout. Check logs with: docker logs othcloud-app"
 }
 
-# Create systemd service
+# Create systemd service for auto-start
 create_systemd_service() {
     log_info "Creating systemd service..."
     
-    cat > /etc/systemd/system/othcloud.service << EOF
+    cat > /etc/systemd/system/othcloud.service << 'EOF'
 [Unit]
-Description=OTHcloud Application Services
+Description=OTHcloud Container Management Platform
 Requires=docker.service
 After=docker.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=true
-ExecStart=/bin/bash -c 'docker start othcloud-postgres othcloud-redis othcloud-app 2>/dev/null || true'
-ExecStop=/bin/bash -c 'docker stop othcloud-app othcloud-redis othcloud-postgres 2>/dev/null || true'
+ExecStart=/bin/bash -c 'docker start othcloud-postgres othcloud-redis othcloud-app othcloud-traefik 2>/dev/null || true'
+ExecStop=/bin/bash -c 'docker stop othcloud-app othcloud-traefik othcloud-redis othcloud-postgres 2>/dev/null || true'
 TimeoutStartSec=120
 TimeoutStopSec=60
 
@@ -657,7 +597,7 @@ EOF
     systemctl daemon-reload
     systemctl enable othcloud.service >/dev/null 2>&1 || true
     
-    log_success "Systemd service created"
+    log_success "Systemd service created and enabled"
 }
 
 # Main installation function
@@ -671,12 +611,9 @@ install_othcloud() {
     install_dependencies
     install_docker
     install_nodejs
-    install_pnpm
     
-    # Setup Docker Swarm (optional)
-    setup_docker_swarm || log_warning "Using standalone Docker mode"
-    
-    clone_repository
+    setup_docker_network
+    prepare_repository
     build_docker_image
     
     setup_database
@@ -687,7 +624,7 @@ install_othcloud() {
     create_systemd_service
     wait_for_services
     
-    # Get server IP for final message
+    # Installation complete
     local server_ip=$(get_server_ip)
     local formatted_addr
     if echo "$server_ip" | grep -q ':'; then
@@ -697,24 +634,32 @@ install_othcloud() {
     fi
     
     echo ""
-    log_success "🎉 OTHcloud installation completed!"
+    echo "════════════════════════════════════════════════════════════════"
+    log_success "🎉 OTHcloud installation completed successfully!"
+    echo "════════════════════════════════════════════════════════════════"
     echo ""
-    log_info "📋 Installation Summary:"
-    echo "   • Application URL: http://${formatted_addr}:3000"
-    echo "   • Installation Directory: $INSTALL_DIR"
-    echo "   • Configuration: /etc/othcloud/"
+    log_info "📋 Access Information:"
+    echo "   🌐 Application URL: http://${formatted_addr}:3000"
+    echo "   🔧 Traefik Dashboard: http://${formatted_addr}:8080 (if enabled)"
     echo ""
-    log_info "🔧 Useful Commands:"
-    echo "   • View logs: docker logs othcloud-app"
-    echo "   • Restart services: systemctl restart othcloud"
-    echo "   • Update: $INSTALL_DIR/install.sh update"
+    log_info "🔑 Default Login Credentials:"
+    echo "   📧 Email: damo@damo.com"
+    echo "   🔒 Password: admin"
+    echo "   ⚠️  CHANGE THESE IMMEDIATELY AFTER LOGIN!"
     echo ""
-    log_warning "⚠️  Default admin credentials:"
-    echo "   • Email: damo@damo.com"
-    echo "   • Password: admin"
-    echo "   • Please change these after first login!"
+    log_info "📁 Installation Locations:"
+    echo "   📂 Application: $INSTALL_DIR"
+    echo "   ⚙️  Configuration: /etc/othcloud/"
     echo ""
-    log_info "🔗 Access your dashboard at: http://${formatted_addr}:3000"
+    log_info "🛠️  Useful Commands:"
+    echo "   📊 Check status: docker ps | grep othcloud"
+    echo "   📋 View logs: docker logs othcloud-app"
+    echo "   🔄 Restart: systemctl restart othcloud"
+    echo "   🆙 Update: $0 update"
+    echo "   🗑️  Uninstall: $0 uninstall"
+    echo ""
+    log_info "🔗 Ready to use! Visit: http://${formatted_addr}:3000"
+    echo "════════════════════════════════════════════════════════════════"
 }
 
 # Update function
@@ -722,139 +667,55 @@ update_othcloud() {
     log_info "🔄 Updating OTHcloud..."
     
     if [ ! -d "$INSTALL_DIR" ]; then
-        log_error "OTHcloud installation directory not found. Please reinstall."
+        log_error "Installation directory not found. Run installation first."
         exit 1
     fi
     
     cd "$INSTALL_DIR"
-    
-    # Pull latest changes
     git pull origin "$REPO_BRANCH"
     
-    # Rebuild image
-    docker build -t "$DOCKER_IMAGE_NAME:latest" .
+    # Rebuild and restart
+    docker build -t "${DOCKER_IMAGE_NAME}:latest" .
+    docker restart othcloud-app
     
-    # Update services
-    if docker info 2>/dev/null | grep -q "Swarm: active"; then
-        docker service update --image "$DOCKER_IMAGE_NAME:latest" othcloud-app
-    else
-        docker stop othcloud-app
-        docker rm othcloud-app
-        # Re-source credentials and redeploy
-        source /etc/othcloud/db-credentials
-        source /etc/othcloud/app-secrets
-        
-        docker run -d \
-            --name othcloud-app \
-            --network othcloud-network \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -v /etc/othcloud:/etc/othcloud \
-            -v othcloud-data:/app/data \
-            -p 3000:3000 \
-            --restart unless-stopped \
-            --env NODE_ENV=production \
-            --env DATABASE_URL="$DATABASE_URL" \
-            --env JWT_SECRET="$JWT_SECRET" \
-            --env SSH_ENCRYPTION_KEY="$SSH_ENCRYPTION_KEY" \
-            --env REDIS_URL="$REDIS_URL" \
-            --env CLOUDFLARE_API_TOKEN="" \
-            --env CLOUDFLARE_ZONE_ID="" \
-            --env BASE_DOMAIN="" \
-            --env SSH_TIMEOUT=30000 \
-            --env DOCKER_TIMEOUT=30000 \
-            "$DOCKER_IMAGE_NAME:latest"
-    fi
-    
-    log_success "✅ OTHcloud updated successfully!"
-}
-
-# Restart services function
-restart_services() {
-    log_info "🔄 Restarting OTHcloud services..."
-    
-    if docker info 2>/dev/null | grep -q "Swarm: active"; then
-        # Restart Docker services
-        docker service update --force othcloud-app 2>/dev/null || true
-        docker service update --force othcloud-postgres 2>/dev/null || true
-        docker service update --force othcloud-redis 2>/dev/null || true
-    else
-        # Restart containers
-        docker restart othcloud-postgres othcloud-redis othcloud-app 2>/dev/null || true
-    fi
-    
-    docker restart othcloud-traefik 2>/dev/null || true
-    
-    log_success "✅ Services restarted successfully!"
+    log_success "✅ Update completed!"
 }
 
 # Uninstall function
 uninstall_othcloud() {
     log_warning "🗑️  Uninstalling OTHcloud..."
     
-    # Stop systemd service
-    systemctl stop othcloud.service 2>/dev/null || true
-    systemctl disable othcloud.service 2>/dev/null || true
-    rm -f /etc/systemd/system/othcloud.service
-    systemctl daemon-reload
-    
-    # Remove Docker services and containers
-    if docker info 2>/dev/null | grep -q "Swarm: active"; then
-        docker service rm othcloud-app othcloud-postgres othcloud-redis 2>/dev/null || true
-    else
-        docker stop othcloud-app othcloud-postgres othcloud-redis 2>/dev/null || true
-        docker rm othcloud-app othcloud-postgres othcloud-redis 2>/dev/null || true
-    fi
-    
-    docker stop othcloud-traefik 2>/dev/null || true
-    docker rm othcloud-traefik 2>/dev/null || true
+    # Stop and remove containers
+    docker stop othcloud-app othcloud-traefik othcloud-redis othcloud-postgres 2>/dev/null || true
+    docker rm othcloud-app othcloud-traefik othcloud-redis othcloud-postgres 2>/dev/null || true
     
     # Remove network
     docker network rm othcloud-network 2>/dev/null || true
     
-    # Remove images
-    docker rmi "$DOCKER_IMAGE_NAME:latest" 2>/dev/null || true
+    # Remove systemd service
+    systemctl disable othcloud.service 2>/dev/null || true
+    rm -f /etc/systemd/system/othcloud.service
+    systemctl daemon-reload
     
-    # Leave swarm
-    docker swarm leave --force 2>/dev/null || true
-    
-    log_warning "⚠️  Data volumes preserved. To remove completely:"
-    echo "   docker volume rm othcloud-postgres-data othcloud-redis-data othcloud-data"
-    echo "   rm -rf $INSTALL_DIR /etc/othcloud"
-    
-    log_success "✅ OTHcloud uninstalled (data preserved)"
+    log_success "✅ Uninstalled (data volumes preserved)"
+    log_info "To remove data: docker volume rm othcloud-postgres-data othcloud-redis-data othcloud-data"
 }
 
 # Show status
 show_status() {
     echo "=== OTHcloud Status ==="
-    if docker info 2>/dev/null | grep -q "Swarm: active"; then
-        docker service ls | grep othcloud || echo "No services running"
-    else
-        docker ps | grep othcloud || echo "No containers running"
-    fi
+    docker ps --filter name=othcloud --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
     echo ""
-    echo "=== Service Health ==="
-    curl -s http://localhost:3000 2>/dev/null && echo "✅ Application healthy" || echo "❌ Application not responding"
+    curl -sf http://localhost:3000 >/dev/null && echo "✅ Application: Healthy" || echo "❌ Application: Not responding"
 }
 
 # Show logs
 show_logs() {
-    if [ -n "$1" ]; then
-        if docker info 2>/dev/null | grep -q "Swarm: active"; then
-            docker service logs -f "othcloud-$1"
-        else
-            docker logs -f "othcloud-$1"
-        fi
-    else
-        echo "Available services: app, postgres, redis"
-        echo "Usage: $0 logs [app|postgres|redis]"
-        echo "Showing app logs:"
-        if docker info 2>/dev/null | grep -q "Swarm: active"; then
-            docker service logs -f othcloud-app
-        else
-            docker logs -f othcloud-app
-        fi
-    fi
+    local service=${1:-app}
+    docker logs -f "othcloud-$service" 2>/dev/null || {
+        echo "Available services: app, postgres, redis, traefik"
+        echo "Usage: $0 logs [service]"
+    }
 }
 
 # Main script logic
@@ -862,16 +723,11 @@ case "$1" in
     "update")
         update_othcloud
         ;;
-    "restart-services")
-        restart_services
-        ;;
     "uninstall")
         read -p "Are you sure you want to uninstall OTHcloud? [y/N]: " -n 1 -r
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             uninstall_othcloud
-        else
-            echo "Uninstall cancelled."
         fi
         ;;
     "status")
