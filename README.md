@@ -155,16 +155,37 @@ Deploy applications with one click:
 
 ## 🚨 Troubleshooting
 
+### Build Issues
+```bash
+# If Docker build fails, try:
+docker system prune -f
+docker build --no-cache -t othcloud/othcloud:latest .
+```
+
 ### Service Issues
 ```bash
 # Check all services
-docker service ls
+docker ps -a
 
 # View application logs
-docker service logs -f othcloud-app
+docker logs othcloud-app
+
+# View database logs 
+docker logs othcloud-postgres
 
 # Restart services
 sudo systemctl restart othcloud
+```
+
+### Network Issues
+```bash
+# Check network connectivity
+docker network ls
+docker network inspect othcloud-network
+
+# Recreate network if needed
+docker network rm othcloud-network
+docker network create othcloud-network
 ```
 
 ### Port Conflicts

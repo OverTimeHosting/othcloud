@@ -40,7 +40,10 @@ COPY --from=build /prod/dokploy/next.config.mjs ./next.config.mjs
 COPY --from=build /prod/dokploy/public ./public
 COPY --from=build /prod/dokploy/package.json ./package.json
 COPY --from=build /prod/dokploy/drizzle ./drizzle
-COPY .env.production ./.env
+# Copy environment file (create if doesn't exist)
+COPY .env.production* ./
+RUN if [ ! -f .env.production ]; then cp .env.example .env.production 2>/dev/null || touch .env.production; fi
+RUN cp .env.production ./.env
 COPY --from=build /prod/dokploy/components.json ./components.json
 COPY --from=build /prod/dokploy/node_modules ./node_modules
 

@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # Quick setup script to make install.sh executable
-chmod +x install.sh
+chmod +x install.sh configure.sh
 
-echo "✅ Installation script is now executable!"
+echo "✅ Installation scripts are now executable!"
 echo ""
 echo "🚀 Run the installation with:"
 echo "   sudo ./install.sh"
